@@ -1,0 +1,51 @@
+{
+  "expo": {
+    "name": "BomDia Share",
+    "slug": "bomdia-share",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#25D366"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.bomdiashare.app",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "O BomDia Share precisa de acesso à galeria para salvar imagens.",
+        "NSPhotoLibraryAddUsageDescription": "O BomDia Share precisa de acesso para salvar imagens na galeria."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#25D366"
+      },
+      "package": "com.bomdiashare.app",
+      "permissions": [
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Permitir que BomDia Share acesse suas fotos.",
+          "savePhotosPermission": "Permitir que BomDia Share salve fotos.",
+          "isAccessMediaLocationEnabled": true
+        }
+      ]
+    ]
+  }
+}
