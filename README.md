@@ -2,8 +2,6 @@
 
 > Encontre e compartilhe imagens de bom dia, boa tarde, boa noite e mensagens motivacionais diretamente no WhatsApp — em segundos!
 
-![BomDia Share Banner](./assets/banner.png)
-
 ---
 
 ## 📱 Sobre o App
@@ -25,7 +23,6 @@ O **BomDia Share** é um aplicativo mobile desenvolvido em React Native (Expo) q
 | Node.js | 18.x ou superior |
 | npm ou yarn | npm 9+ |
 | Expo CLI | `npx expo` (sem instalação global) |
-| Conta Google | Para obter a API Key gratuita |
 | Expo Go App | No seu celular (Android ou iOS) |
 
 ---
@@ -36,7 +33,7 @@ O **BomDia Share** é um aplicativo mobile desenvolvido em React Native (Expo) q
 
 ```bash
 # Se tiver Git:
-git clone https://github.com/seu-usuario/bomdia-share.git
+git clone https://github.com/XandyGomes/bomdia-share.git
 cd bomdia-share
 
 # Ou simplesmente entre na pasta do projeto:
@@ -49,53 +46,9 @@ cd bomdia-share
 npm install
 ```
 
-### 3. Configure a API Key (obrigatório para imagens reais)
+### 3. Pronto — não precisa de API Key
 
-> Sem a API Key, o app funciona em **modo demonstração** com imagens aleatórias.
-
-Abra o arquivo `src/config/api.js` e substitua os valores:
-
-```javascript
-export const GOOGLE_API_KEY = 'SUA_CHAVE_AQUI';      // ← sua chave
-export const SEARCH_ENGINE_ID = 'SEU_CX_AQUI';        // ← seu ID
-```
-
----
-
-## 🔑 Como obter a API Key GRATUITAMENTE
-
-### Passo 1 — Google Cloud Console
-
-1. Acesse [console.cloud.google.com](https://console.cloud.google.com/)
-2. Faça login com sua conta Google
-3. Clique em **"Criar Projeto"** (ou selecione um existente)
-4. Dê um nome como `BomDia Share`
-
-### Passo 2 — Ativar a API
-
-1. No menu lateral, vá em **"APIs e Serviços"** → **"Biblioteca"**
-2. Pesquise por: **`Custom Search JSON API`**
-3. Clique e depois em **"ATIVAR"**
-
-### Passo 3 — Criar a Chave de API
-
-1. Vá em **"APIs e Serviços"** → **"Credenciais"**
-2. Clique em **"+ CRIAR CREDENCIAIS"** → **"Chave de API"**
-3. Copie a chave gerada (começa com `AIza...`)
-4. Cole no arquivo `src/config/api.js` em `GOOGLE_API_KEY`
-
-### Passo 4 — Criar o Mecanismo de Busca (CX)
-
-1. Acesse [programmablesearchengine.google.com](https://programmablesearchengine.google.com/)
-2. Clique em **"Adicionar"**
-3. Em **"Sites para pesquisar"**: marque **"Pesquisar em toda a web"**
-4. Em **"Nome do mecanismo"**: escreva `BomDia Search`
-5. Clique em **"Criar"**
-6. Copie o **"ID do mecanismo de pesquisa"** (CX)
-7. Cole no arquivo `src/config/api.js` em `SEARCH_ENGINE_ID`
-
-> ⚠️ **Cota gratuita:** 100 consultas por dia. Cada busca ou página usa 1 cota.
-> Para mais, habilite o faturamento no Google Cloud (plano pago).
+A busca de imagens usa a API não-oficial de imagens do **DuckDuckGo**, que não exige cadastro, chave ou cota diária. Configurações opcionais (itens por página, timeout de busca) ficam em `src/config/api.js`.
 
 ---
 
@@ -141,7 +94,7 @@ bomdia-share/
 ├── assets/                     # Ícones e splash screen
 └── src/
     ├── config/
-    │   └── api.js              # ⚙️ CONFIGURE AQUI: API Key e Search Engine ID
+    │   └── api.js              # Configurações gerais (itens por página, timeout)
     ├── screens/
     │   ├── HomeScreen.js       # Tela principal (busca + grid)
     │   └── ImageModal.js       # Modal de preview e compartilhamento
@@ -150,7 +103,7 @@ bomdia-share/
     │   ├── ImageGrid.js        # Grade 2 colunas com FlatList
     │   └── ImageCard.js        # Card individual com skeleton
     ├── services/
-    │   ├── imageSearch.js      # Integração Google Custom Search API
+    │   ├── imageSearch.js      # Busca de imagens via DuckDuckGo Images (sem API key)
     │   └── shareImage.js       # Download + compartilhamento + galeria
     └── utils/
         └── timeGreeting.js     # Detecta hora e retorna saudação
@@ -181,14 +134,9 @@ bomdia-share/
 
 ## 🐛 Solução de Problemas
 
-### App mostra apenas imagens cinzas (modo demo)
-- Verifique se editou `src/config/api.js` com suas chaves reais
-- Confirme que a `Custom Search JSON API` está **ativada** no Google Cloud
-- Teste a chave diretamente: `https://www.googleapis.com/customsearch/v1?key=SUA_CHAVE&cx=SEU_CX&searchType=image&q=teste`
-
-### Erro "Cota excedida" (403)
-- A cota gratuita é de 100 consultas/dia
-- Aguarde até o dia seguinte ou habilite faturamento
+### Nenhuma imagem aparece na busca
+- Verifique sua conexão com a internet
+- O DuckDuckGo pode alterar seu formato de resposta ocasionalmente — se as buscas pararem de retornar resultados, verifique se `src/services/imageSearch.js` ainda extrai o token `vqd` corretamente
 
 ### WhatsApp não aparece no share sheet
 - Verifique se o WhatsApp está instalado no dispositivo
@@ -217,14 +165,14 @@ bomdia-share/
 
 | Biblioteca | Versão | Uso |
 |-----------|--------|-----|
-| expo | ~51.0.0 | Framework base |
-| expo-file-system | ~17.0.1 | Download de imagens |
-| expo-sharing | ~12.0.1 | Compartilhamento nativo |
-| expo-media-library | ~16.0.3 | Salvar na galeria |
-| expo-linear-gradient | ~13.0.2 | Gradiente do header |
-| @react-navigation/native | ^6.1.17 | Navegação |
+| expo | ~54.0.0 | Framework base |
+| expo-file-system | ~19.0.23 | Download de imagens |
+| expo-sharing | ~14.0.8 | Compartilhamento nativo |
+| expo-media-library | ~18.2.1 | Salvar na galeria |
+| expo-linear-gradient | ~15.0.8 | Gradiente do header |
+| @react-navigation/native | ^6.1.18 | Navegação |
 | axios | ^1.7.2 | Requisições HTTP |
-| @expo/vector-icons | ^14.0.2 | Ícones (Ionicons) |
+| @expo/vector-icons | ^15.0.3 | Ícones (Ionicons) |
 
 ---
 
