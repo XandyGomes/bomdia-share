@@ -1,6 +1,6 @@
 # 🌅 BomDia Share
 
-> Encontre e compartilhe imagens de bom dia, boa tarde, boa noite e mensagens motivacionais diretamente no WhatsApp — em segundos!
+> Encontre e compartilhe imagens de bom dia, boa tarde, boa noite e mensagens motivacionais diretamente no WhatsApp, em segundos!
 
 ---
 
@@ -46,7 +46,7 @@ cd bomdia-share
 npm install
 ```
 
-### 3. Pronto — não precisa de API Key
+### 3. Pronto! Não precisa de API Key
 
 A busca de imagens usa a API não-oficial de imagens do **DuckDuckGo**, que não exige cadastro, chave ou cota diária. Configurações opcionais (itens por página, timeout de busca) ficam em `src/config/api.js`.
 
@@ -136,7 +136,7 @@ bomdia-share/
 
 ### Nenhuma imagem aparece na busca
 - Verifique sua conexão com a internet
-- O DuckDuckGo pode alterar seu formato de resposta ocasionalmente — se as buscas pararem de retornar resultados, verifique se `src/services/imageSearch.js` ainda extrai o token `vqd` corretamente
+- O DuckDuckGo pode alterar seu formato de resposta ocasionalmente. Se as buscas pararem de retornar resultados, verifique se `src/services/imageSearch.js` ainda extrai o token `vqd` corretamente
 
 ### WhatsApp não aparece no share sheet
 - Verifique se o WhatsApp está instalado no dispositivo
@@ -197,7 +197,7 @@ bomdia-share/
 
 ## 📄 Licença
 
-MIT License — use, modifique e distribua livremente.
+MIT License: use, modifique e distribua livremente.
 
 ```
 MIT License
