@@ -184,7 +184,15 @@ export async function buscarImagens(query, page = 1) {
 
   const pageItems = s.buffer.slice(startIdx, endIdx);
   const todasEsgotadas = s.ddgFim && s.bingFim && s.pexelsFim;
-  const hasMore = s.buffer.length > endIdx || !todasEsgotadas;
+  let hasMore = s.buffer.length > endIdx || !todasEsgotadas;
+
+  // Segurança: se mesmo depois de várias rodadas não sobrou nada de novo pra
+  // preencher esta página (tudo já visto/deduplicado), para de reportar
+  // hasMore — senão o app fica girando "carregando mais" pra sempre, mesmo
+  // com fontes tecnicamente "não esgotadas"
+  if (page > 1 && pageItems.length === 0) {
+    hasMore = false;
+  }
 
   if (page === 1 && pageItems.length === 0) {
     throw new Error(

@@ -33,6 +33,7 @@ export default function CategoryChips({ categorias, categoriaAtivaId, onSelecion
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
+      style={styles.scroll}
       contentContainerStyle={styles.container}
     >
       {categorias.map((categoria) => {
@@ -56,7 +57,13 @@ export default function CategoryChips({ categorias, categoriaAtivaId, onSelecion
 }
 
 const styles = StyleSheet.create({
+  scroll: {
+    flexGrow: 0,
+    flexShrink: 0,
+    height: 52,
+  },
   container: {
+    alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 8,
     gap: 8,
