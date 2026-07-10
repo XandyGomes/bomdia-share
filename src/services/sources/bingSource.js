@@ -40,7 +40,7 @@ function decodeEntidades(str) {
  */
 function extrairResultados(html) {
   const resultados = [];
-  const regex = /class="iusc"[^>]*?m='([^']+)'/g;
+  const regex = /class="iusc"[^>]*?m="([^"]+)"/g;
   let match;
 
   while ((match = regex.exec(html)) !== null) {
