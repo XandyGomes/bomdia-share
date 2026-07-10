@@ -2,15 +2,15 @@
  * src/screens/HomeScreen.js
  * ─────────────────────────────────────────────────────────────────────────────
  * Tela principal do BomDia Share
- * - Header com saudação baseada na hora
- * - Barra de busca
- * - Grade de imagens com paginação
+ * - Header com saudação baseada na hora + contador de compartilhadas hoje
+ * - Chips de categoria + barra de busca
+ * - Grade de imagens com paginação (DDG + Bing + Pexels combinados)
  * - Modal de preview
  * - FAB (botão flutuante) do WhatsApp
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -19,24 +19,33 @@ import {
   TouchableOpacity,
   Alert,
   Animated,
-  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
 
 // Componentes
 import SearchBar from '../components/SearchBar';
 import ImageGrid from '../components/ImageGrid';
+import CategoryChips from '../components/CategoryChips';
 import ImageModal from './ImageModal';
 
 // Serviços
 import { buscarImagens } from '../services/imageSearch';
 import { compartilharNoWhatsApp } from '../services/shareImage';
+import {
+  listarCompartilhadas,
+  marcarComoCompartilhada,
+  limparHistorico,
+  contarCompartilhadasHoje,
+} from '../services/sharedHistory';
 
-// Utilitários
+// Utilitários / constantes
 import { getGreetingByTime } from '../utils/timeGreeting';
+import { normalizeUrlForDedup } from '../utils/url';
+import { CATEGORIAS } from '../constants/categorias';
 
 // Constantes de cores
 const COLORS = {
@@ -52,55 +61,64 @@ const COLORS = {
 };
 
 export default function HomeScreen() {
-  // Obtém insets seguros (status bar, notch, etc.)
   const insets = useSafeAreaInsets();
+
   // ── Estado principal ────────────────────────────────────────────────────────
   const [termoBusca, setTermoBusca] = useState('');
   const [termoAtivo, setTermoAtivo] = useState('');
+  const [categoriaAtivaId, setCategoriaAtivaId] = useState(null);
   const [imagens, setImagens] = useState([]);
   const [paginaAtual, setPaginaAtual] = useState(1);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [temMais, setTemMais] = useState(true);
-  const [isDemo, setIsDemo] = useState(false);
   const [erroGlobal, setErroGlobal] = useState(null);
+  const [erroPaginacao, setErroPaginacao] = useState(false);
+
+  // ── Histórico de compartilhamento ───────────────────────────────────────────
+  const [historicoUrls, setHistoricoUrls] = useState(new Set());
+  const [mostrarCompartilhadas, setMostrarCompartilhadas] = useState(false);
+  const [compartilhadasHoje, setCompartilhadasHoje] = useState(0);
 
   // ── Modal ───────────────────────────────────────────────────────────────────
   const [modalVisivel, setModalVisivel] = useState(false);
   const [imagemSelecionada, setImagemSelecionada] = useState(null);
   const [ultimoCompartilhamento, setUltimoCompartilhamento] = useState(null);
 
+  // ── Trava síncrona contra chamadas concorrentes (scroll rápido, duplo toque) ──
+  const emVooRef = useRef(false);
+
   // ── Saudação baseada na hora ────────────────────────────────────────────────
   const saudacao = getGreetingByTime();
 
   // ── Animação do FAB ─────────────────────────────────────────────────────────
   const fabAnim = useRef(new Animated.Value(1)).current;
-  const fabRotate = useRef(new Animated.Value(0)).current;
 
-  // ── Efeito inicial: busca baseada na hora ───────────────────────────────────
+  // ── Efeito inicial: busca baseada na hora + carrega histórico ───────────────
   useEffect(() => {
     const termoInicial = saudacao.termo;
     setTermoBusca(termoInicial);
     executarBusca(termoInicial, 1, false);
+    carregarHistorico();
   }, []);
 
   // ── Animação do FAB ao aparecer ─────────────────────────────────────────────
   useEffect(() => {
     if (ultimoCompartilhamento) {
       Animated.sequence([
-        Animated.timing(fabAnim, {
-          toValue: 1.2,
-          duration: 150,
-          useNativeDriver: true,
-        }),
-        Animated.spring(fabAnim, {
-          toValue: 1,
-          useNativeDriver: true,
-        }),
+        Animated.timing(fabAnim, { toValue: 1.2, duration: 150, useNativeDriver: true }),
+        Animated.spring(fabAnim, { toValue: 1, useNativeDriver: true }),
       ]).start();
     }
   }, [ultimoCompartilhamento]);
+
+  async function carregarHistorico() {
+    const { urls } = await listarCompartilhadas();
+    setHistoricoUrls(urls);
+    const hoje = await contarCompartilhadasHoje();
+    setCompartilhadasHoje(hoje);
+  }
 
   /**
    * Executa a busca de imagens
@@ -112,13 +130,12 @@ export default function HomeScreen() {
     if (!termo.trim()) return;
 
     try {
-      setErroGlobal(null);
+      setErroPaginacao(false);
 
       if (pagina === 1 && !acumular) {
+        setErroGlobal(null);
         setLoading(true);
         setImagens([]);
-      } else {
-        setLoadingMore(true);
       }
 
       const resultado = await buscarImagens(termo, pagina);
@@ -128,22 +145,19 @@ export default function HomeScreen() {
       );
       setPaginaAtual(pagina);
       setTemMais(resultado.hasMore);
-      setIsDemo(resultado.isDemo || false);
       setTermoAtivo(termo);
-
     } catch (error) {
       console.error('Erro na busca:', error);
-      setErroGlobal(error.message);
 
-      // Mostra alerta apenas para erros de configuração
-      if (error.message.includes('SUA_CHAVE') || error.message.includes('api.js')) {
-        // Silencia — o banner de demo já orienta o usuário
+      if (pagina === 1) {
+        // Busca inicial falhou de verdade (todas as fontes vazias) — avisa o usuário
+        setErroGlobal(error.message);
+        setTemMais(false);
+        Alert.alert('❌ Erro na busca', error.message, [{ text: 'OK' }]);
       } else {
-        Alert.alert(
-          '❌ Erro na busca',
-          error.message,
-          [{ text: 'OK' }]
-        );
+        // Falha ao carregar mais páginas: degrada silenciosamente, sem popup
+        setErroPaginacao(true);
+        setTemMais(false);
       }
     } finally {
       setLoading(false);
@@ -153,28 +167,55 @@ export default function HomeScreen() {
   }, []);
 
   /**
-   * Handler da barra de busca: dispara nova busca
+   * Handler da barra de busca: dispara nova busca (busca livre limpa a categoria ativa)
    */
   function handleBuscar(termo) {
+    if (emVooRef.current) return;
+    emVooRef.current = true;
+    setCategoriaAtivaId(null);
     setTermoBusca(termo);
-    executarBusca(termo, 1, false);
+    executarBusca(termo, 1, false).finally(() => {
+      emVooRef.current = false;
+    });
   }
 
   /**
-   * Handler de paginação (scroll infinito)
+   * Handler dos chips de categoria
+   */
+  function handleSelecionarCategoria(categoria) {
+    if (emVooRef.current) return;
+    emVooRef.current = true;
+    setCategoriaAtivaId(categoria.id);
+    setTermoBusca(categoria.termo);
+    executarBusca(categoria.termo, 1, false).finally(() => {
+      emVooRef.current = false;
+    });
+  }
+
+  /**
+   * Handler de paginação (scroll infinito) — trava síncrona evita chamadas
+   * concorrentes disparadas pelo FlatList antes do estado atualizar
    */
   function handleCarregarMais() {
-    if (!loadingMore && !loading && temMais && termoAtivo) {
-      executarBusca(termoAtivo, paginaAtual + 1, true);
-    }
+    if (emVooRef.current || loading || !temMais || !termoAtivo) return;
+
+    emVooRef.current = true;
+    setLoadingMore(true);
+    executarBusca(termoAtivo, paginaAtual + 1, true).finally(() => {
+      emVooRef.current = false;
+    });
   }
 
   /**
    * Handler de pull-to-refresh
    */
   function handleRefresh() {
+    if (emVooRef.current) return;
+    emVooRef.current = true;
     setRefreshing(true);
-    executarBusca(termoAtivo || saudacao.termo, 1, false);
+    executarBusca(termoAtivo || saudacao.termo, 1, false).finally(() => {
+      emVooRef.current = false;
+    });
   }
 
   /**
@@ -190,8 +231,10 @@ export default function HomeScreen() {
    */
   async function handleToqueLongoImagem(imagem) {
     try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       setUltimoCompartilhamento(imagem);
       await compartilharNoWhatsApp(imagem.url);
+      await registrarCompartilhamento(imagem.url);
     } catch (error) {
       Alert.alert('Erro', error.message, [{ text: 'OK' }]);
     }
@@ -202,7 +245,6 @@ export default function HomeScreen() {
    */
   async function handleFAB() {
     if (!ultimoCompartilhamento) {
-      // Se não há último, abre o primeiro da lista como sugestão
       if (imagens.length > 0) {
         handleToqueImagem(imagens[0]);
       }
@@ -211,19 +253,70 @@ export default function HomeScreen() {
 
     try {
       await compartilharNoWhatsApp(ultimoCompartilhamento.url);
+      await registrarCompartilhamento(ultimoCompartilhamento.url);
     } catch (error) {
       Alert.alert('Erro', error.message, [{ text: 'OK' }]);
     }
   }
 
+  /**
+   * Atualiza o histórico (memória + storage + contador) sem precisar reler tudo
+   */
+  async function registrarCompartilhamento(url) {
+    const chave = normalizeUrlForDedup(url);
+    await marcarComoCompartilhada(url);
+    setHistoricoUrls(prev => new Set(prev).add(chave));
+    setCompartilhadasHoje(prev => prev + 1);
+  }
+
+  function handleToggleMostrarCompartilhadas() {
+    Haptics.selectionAsync();
+    setMostrarCompartilhadas(prev => !prev);
+  }
+
+  function handleLimparHistorico() {
+    Alert.alert(
+      'Limpar histórico?',
+      'As imagens já compartilhadas voltarão a aparecer na busca.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Limpar',
+          style: 'destructive',
+          onPress: async () => {
+            await limparHistorico();
+            setHistoricoUrls(new Set());
+            setCompartilhadasHoje(0);
+          },
+        },
+      ]
+    );
+  }
+
+  // ── Lista final exibida: oculta já-compartilhadas quando o toggle está desligado ──
+  const { imagensExibidas, ocultandoCompartilhadas } = useMemo(() => {
+    if (mostrarCompartilhadas) {
+      return { imagensExibidas: imagens, ocultandoCompartilhadas: false };
+    }
+    const filtradas = imagens.filter(
+      img => !historicoUrls.has(normalizeUrlForDedup(img.url))
+    );
+    return {
+      imagensExibidas: filtradas,
+      ocultandoCompartilhadas: filtradas.length < imagens.length,
+    };
+  }, [imagens, historicoUrls, mostrarCompartilhadas]);
+
+  const mensagemVazio = erroGlobal
+    ? erroGlobal
+    : ocultandoCompartilhadas && imagensExibidas.length === 0
+      ? 'Todas as imagens encontradas já foram compartilhadas por você.'
+      : `Nenhuma imagem encontrada para "${termoAtivo}"`;
+
   // Rótulo do FAB
-  const fabLabel = ultimoCompartilhamento
-    ? 'Recompartilhar último'
-    : 'Compartilhar';
+  const fabLabel = ultimoCompartilhamento ? 'Recompartilhar último' : 'Compartilhar';
 
   return (
-    // edges={[]} desativa o padding automático do SafeAreaView da safe-area-context
-    // pois gerenciamos manualmente via insets.top no header
     <SafeAreaView style={styles.safe} edges={[]}>
       <StatusBar
         barStyle="light-content"
@@ -239,16 +332,44 @@ export default function HomeScreen() {
         style={[styles.header, { paddingTop: insets.top + 8 }]}
       >
         <View style={styles.headerContent}>
-          {/* Logo e nome */}
           <View style={styles.headerLogo}>
             <Ionicons name="sunny" size={26} color={COLORS.branco} />
             <Text style={styles.headerNome}>BomDia Share</Text>
           </View>
 
-          {/* Saudação baseada na hora */}
+          <View style={styles.headerAcoes}>
+            <TouchableOpacity
+              onPress={handleToggleMostrarCompartilhadas}
+              onLongPress={handleLimparHistorico}
+              style={styles.headerBotaoOlho}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons
+                name={mostrarCompartilhadas ? 'eye' : 'eye-off'}
+                size={20}
+                color={COLORS.branco}
+              />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <View style={styles.headerContent}>
           <Text style={styles.headerSaudacao}>{saudacao.saudacao}</Text>
+          {compartilhadasHoje > 0 && (
+            <View style={styles.contadorChip}>
+              <Ionicons name="checkmark-done" size={13} color={COLORS.branco} />
+              <Text style={styles.contadorTexto}>{compartilhadasHoje} enviadas hoje</Text>
+            </View>
+          )}
         </View>
       </LinearGradient>
+
+      {/* ── Chips de categoria ── */}
+      <CategoryChips
+        categorias={CATEGORIAS}
+        categoriaAtivaId={categoriaAtivaId}
+        onSelecionar={handleSelecionarCategoria}
+      />
 
       {/* ── Barra de busca ── */}
       <View style={styles.buscaContainer}>
@@ -260,27 +381,10 @@ export default function HomeScreen() {
         />
       </View>
 
-      {/* ── Chip do termo ativo ── */}
-      {termoAtivo && !loading && (
-        <View style={styles.chipContainer}>
-          <View style={styles.chip}>
-            <Ionicons name="images-outline" size={13} color={COLORS.verde} />
-            <Text style={styles.chipTexto} numberOfLines={1}>
-              {termoAtivo}
-            </Text>
-          </View>
-          {isDemo && (
-            <View style={styles.chipDemo}>
-              <Text style={styles.chipDemoTexto}>Modo demo</Text>
-            </View>
-          )}
-        </View>
-      )}
-
       {/* ── Grade de imagens ── */}
       <View style={styles.grid}>
         <ImageGrid
-          images={imagens}
+          images={imagensExibidas}
           onImagePress={handleToqueImagem}
           onImageLongPress={handleToqueLongoImagem}
           loading={loading}
@@ -288,27 +392,16 @@ export default function HomeScreen() {
           refreshing={refreshing}
           onRefresh={handleRefresh}
           onEndReached={handleCarregarMais}
-          emptyMessage={
-            erroGlobal
-              ? erroGlobal
-              : `Nenhuma imagem encontrada para "${termoAtivo}"`
-          }
-          isDemo={isDemo}
+          emptyMessage={mensagemVazio}
+          erroPaginacao={erroPaginacao}
+          mostrandoOcultas={ocultandoCompartilhadas}
+          onRevelarOcultas={handleToggleMostrarCompartilhadas}
         />
       </View>
 
       {/* ── FAB (Botão Flutuante) WhatsApp ── */}
-      <Animated.View
-        style={[
-          styles.fabContainer,
-          { transform: [{ scale: fabAnim }] },
-        ]}
-      >
-        <TouchableOpacity
-          style={styles.fab}
-          onPress={handleFAB}
-          activeOpacity={0.85}
-        >
+      <Animated.View style={[styles.fabContainer, { transform: [{ scale: fabAnim }] }]}>
+        <TouchableOpacity style={styles.fab} onPress={handleFAB} activeOpacity={0.85}>
           <Ionicons name="logo-whatsapp" size={28} color={COLORS.branco} />
         </TouchableOpacity>
         <Text style={styles.fabLabel}>{fabLabel}</Text>
@@ -318,10 +411,8 @@ export default function HomeScreen() {
       <ImageModal
         visible={modalVisivel}
         image={imagemSelecionada}
-        onClose={() => {
-          setModalVisivel(false);
-          // Atualiza último compartilhamento se o usuário compartilhou no modal
-        }}
+        onClose={() => setModalVisivel(false)}
+        onCompartilhado={registrarCompartilhamento}
       />
     </SafeAreaView>
   );
@@ -332,8 +423,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.fundo,
   },
-  // ── Header ──────────────────────────────────────────────────────────────────
-  // O paddingTop é calculado dinamicamente via insets, não no StyleSheet estático
   header: {
     paddingBottom: 14,
     paddingHorizontal: 20,
@@ -355,16 +444,40 @@ const styles = StyleSheet.create({
     color: COLORS.branco,
     letterSpacing: 0.5,
   },
+  headerAcoes: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerBotaoOlho: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   headerSaudacao: {
     fontSize: 15,
     color: 'rgba(255,255,255,0.9)',
     fontWeight: '500',
   },
-  // ── Busca ───────────────────────────────────────────────────────────────────
+  contadorChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    gap: 4,
+  },
+  contadorTexto: {
+    fontSize: 12,
+    color: COLORS.branco,
+    fontWeight: '600',
+  },
   buscaContainer: {
     backgroundColor: COLORS.branco,
     paddingBottom: 4,
-    // Sombra suave abaixo do header
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.06,
@@ -372,49 +485,10 @@ const styles = StyleSheet.create({
     elevation: 2,
     zIndex: 10,
   },
-  // ── Chip do termo ativo ─────────────────────────────────────────────────────
-  chipContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 2,
-    gap: 8,
-  },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.branco,
-    borderRadius: 20,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: COLORS.verde + '40',
-    gap: 4,
-    maxWidth: '60%',
-  },
-  chipTexto: {
-    fontSize: 12,
-    color: COLORS.verde,
-    fontWeight: '500',
-  },
-  chipDemo: {
-    backgroundColor: '#FFF3CD',
-    borderRadius: 20,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  chipDemoTexto: {
-    fontSize: 11,
-    color: '#856404',
-    fontWeight: '600',
-  },
-  // ── Grid ────────────────────────────────────────────────────────────────────
   grid: {
     flex: 1,
     backgroundColor: COLORS.fundo,
   },
-  // ── FAB ─────────────────────────────────────────────────────────────────────
   fabContainer: {
     position: 'absolute',
     bottom: 24,
@@ -428,7 +502,6 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.verde,
     alignItems: 'center',
     justifyContent: 'center',
-    // Sombra
     shadowColor: COLORS.verde,
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.45,

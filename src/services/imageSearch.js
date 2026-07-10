@@ -1,190 +1,200 @@
 /**
  * src/services/imageSearch.js
  * ─────────────────────────────────────────────────────────────────────────────
- * Busca de imagens usando DuckDuckGo Images (API não-oficial)
- * ✅ 100% gratuito, sem API key, sem cadastro
- * ✅ Retorna imagens reais do Pinterest, blogs, sites brasileiros
- * ✅ React Native não tem CORS, então funciona perfeitamente
+ * Orquestrador de busca de imagens — combina 3 fontes:
+ *   1. DuckDuckGo Images (src/services/sources/ddgSource.js)
+ *   2. Bing Images       (src/services/sources/bingSource.js)
+ *   3. Pexels            (src/services/sources/pexelsSource.js) — só como reforço
+ *
+ * DDG e Bing são consultados em paralelo a cada "rodada" e os resultados são
+ * mesclados e deduplicados por URL. Pexels só entra quando DDG+Bing não
+ * conseguem preencher a página sozinhos (evita gastar a cota gratuita do
+ * Pexels em toda rolagem).
+ *
+ * Uma falha de UMA fonte nunca derruba a busca inteira — a fonte que falhar é
+ * marcada como esgotada para esta sessão de busca e as outras continuam.
+ * Só lançamos erro de verdade quando a página 1 termina com zero imagens.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import axios from 'axios';
+import { IMAGES_PER_PAGE } from '../config/api';
+import { buscarDDG } from './sources/ddgSource';
+import { buscarBing } from './sources/bingSource';
+import { buscarPexels } from './sources/pexelsSource';
+import { normalizeUrlForDedup } from '../utils/url';
 
-const DDG_URL    = 'https://duckduckgo.com/';
-const DDG_IMG    = 'https://duckduckgo.com/i.js';
-const RESULTS_PER_PAGE = 12;
+const MAX_RODADAS_POR_PAGINA = 4;
 
-const USER_AGENT =
-  'Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 ' +
-  '(KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36';
-
-// Cache de tokens e próximas páginas por query
-const tokenCache = {};    // query → vqd
-const nextPageCache = {}; // query → next URL para próxima página
-const imageBuffer = {};   // query → array com imagens acumuladas
+// Estado de cada busca em andamento, por cacheKey (termo enriquecido)
+const sessao = {}; // cacheKey → { buffer, seenUrls, ddgPage, bingPage, pexelsPage, ddgFim, bingFim, pexelsFim }
 
 /**
  * Enriquece o termo para buscar imagens com texto motivacional em PT-BR
+ * (usado por DDG e Bing, que respondem bem a frases longas)
  */
 function enriquecerQuery(query) {
   const q = query.toLowerCase().trim();
 
-  if (q.includes('bom dia'))    return 'bom dia mensagem frases motivacional imagem';
-  if (q.includes('boa tarde'))  return 'boa tarde mensagem frases imagem bonita';
-  if (q.includes('boa noite'))  return 'boa noite mensagem frases imagem carinhosa';
-  if (q.includes('motivac'))    return `${query} frases motivacionais imagens`;
+  if (q.includes('bom dia'))   return 'bom dia mensagem frases motivacional imagem';
+  if (q.includes('boa tarde')) return 'boa tarde mensagem frases imagem bonita';
+  if (q.includes('boa noite')) return 'boa noite mensagem frases imagem carinhosa';
+  if (q.includes('motivac'))   return `${query} frases motivacionais imagens`;
   if (q.includes('fé') || q.includes('fe') || q.includes('deus'))
                                 return `${query} mensagem fé imagem`;
   return `${query} mensagem imagem frases`;
 }
 
 /**
- * Busca o token VQD do DuckDuckGo para uma query
- * O token é obrigatório para usar a API de imagens
+ * Versão mais literal do termo para o Pexels (banco de fotos) — frases longas
+ * em português com gírias retornam poucos resultados num banco de imagens,
+ * então usamos termos mais simples e diretos por categoria.
  */
-async function buscarToken(query) {
-  if (tokenCache[query]) return tokenCache[query];
+function enriquecerQueryPexels(query) {
+  const q = query.toLowerCase().trim();
 
-  const response = await axios.get(DDG_URL, {
-    params: { q: query, iax: 'images', ia: 'images' },
-    headers: {
-      'User-Agent': USER_AGENT,
-      'Accept': 'text/html,application/xhtml+xml',
-      'Accept-Language': 'pt-BR,pt;q=0.9',
-    },
-    timeout: 10000,
-  });
-
-  // Extrai o token VQD do HTML da resposta
-  const match =
-    response.data.match(/vqd=["']?([^"'&]+)["']?/) ||
-    response.data.match(/vqd%3D([^&"']+)/);
-
-  if (!match) {
-    throw new Error('Não foi possível iniciar a busca. Tente novamente.');
-  }
-
-  const vqd = decodeURIComponent(match[1]);
-  tokenCache[query] = vqd;
-  return vqd;
+  if (q.includes('bom dia'))   return 'good morning sunrise coffee';
+  if (q.includes('boa tarde')) return 'afternoon sunshine nature';
+  if (q.includes('boa noite')) return 'good night moon stars';
+  if (q.includes('motivac'))   return 'motivation inspiration';
+  if (q.includes('fé') || q.includes('fe') || q.includes('deus'))
+                                return 'faith prayer light';
+  if (q.includes('amor'))      return 'love couple heart';
+  return query;
 }
 
-/**
- * Busca lote de imagens na API do DuckDuckGo
- */
-async function buscarLote(query, vqd, nextUrl = null) {
-  const url    = nextUrl ? `https://duckduckgo.com${nextUrl}` : DDG_IMG;
-  const params = nextUrl
-    ? {}
-    : {
-        l: 'br-pt_BR',
-        o: 'json',
-        q: query,
-        vqd,
-        f: ',,,,,',  // filtros: tamanho, cor, tipo, licença, etc.
-        p: 1,        // página inicial
-      };
-
-  const response = await axios.get(url, {
-    params,
-    headers: {
-      'User-Agent': USER_AGENT,
-      'Referer': `https://duckduckgo.com/?q=${encodeURIComponent(query)}&iax=images&ia=images`,
-      'Accept': 'application/json',
-      'Accept-Language': 'pt-BR,pt;q=0.9',
-    },
-    timeout: 15000,
-  });
-
-  return response.data; // { results: [...], next: '/i.js?...' }
-}
-
-/**
- * Normaliza um resultado do DDG para o formato do app
- */
-function normalizarImagem(item, index, page) {
+function novaSessao() {
   return {
-    id: `ddg-${page}-${index}-${Date.now()}`,
-    url: item.image || item.url || '',
-    thumbnailUrl: item.thumbnail || item.image || '',
-    title: item.title || '',
-    width: item.width || 800,
-    height: item.height || 800,
-    source: item.url || '',
+    buffer: [],
+    seenUrls: new Set(),
+    ddgPage: 1,
+    bingPage: 1,
+    pexelsPage: 1,
+    ddgFim: false,
+    bingFim: false,
+    pexelsFim: false,
   };
 }
 
+function adicionarAoBuffer(s, results) {
+  for (const item of results) {
+    const chave = normalizeUrlForDedup(item.url);
+    if (!chave || s.seenUrls.has(chave)) continue;
+    s.seenUrls.add(chave);
+    s.buffer.push(item);
+  }
+}
+
 /**
- * Busca imagens usando DuckDuckGo Images
+ * Busca uma rodada de DDG + Bing em paralelo; nunca rejeita — fontes que
+ * falharem são marcadas como esgotadas e simplesmente não contribuem mais.
+ */
+async function rodadaDdgBing(s, queryOtimizada) {
+  const tarefas = [];
+
+  if (!s.ddgFim) {
+    tarefas.push(
+      buscarDDG(queryOtimizada, s.ddgPage)
+        .then(r => {
+          s.ddgPage += 1;
+          s.ddgFim = !r.hasMore;
+          adicionarAoBuffer(s, r.results);
+        })
+        .catch(() => {
+          s.ddgFim = true;
+        })
+    );
+  }
+
+  if (!s.bingFim) {
+    tarefas.push(
+      buscarBing(queryOtimizada, s.bingPage)
+        .then(r => {
+          s.bingPage += 1;
+          s.bingFim = !r.hasMore;
+          adicionarAoBuffer(s, r.results);
+        })
+        .catch(() => {
+          s.bingFim = true;
+        })
+    );
+  }
+
+  if (tarefas.length > 0) {
+    await Promise.all(tarefas);
+  }
+}
+
+/**
+ * Busca uma rodada de reforço no Pexels (só chamado quando DDG+Bing não bastam)
+ */
+async function rodadaPexels(s, queryPexels) {
+  if (s.pexelsFim) return;
+
+  try {
+    const r = await buscarPexels(queryPexels, s.pexelsPage);
+    s.pexelsPage += 1;
+    s.pexelsFim = !r.hasMore;
+    adicionarAoBuffer(s, r.results);
+  } catch (_) {
+    s.pexelsFim = true;
+  }
+}
+
+/**
+ * Busca imagens combinando DuckDuckGo, Bing e (se necessário) Pexels
  *
- * @param {string} query — Termo digitado pelo usuário
+ * @param {string} query — Termo digitado pelo usuário ou de uma categoria
  * @param {number} page  — Página (começa em 1)
  * @returns {Promise<{ images, totalResults, hasMore }>}
  */
 export async function buscarImagens(query, page = 1) {
+  if (!query || !query.trim()) {
+    return { images: [], totalResults: 0, hasMore: false };
+  }
+
   const queryOtimizada = enriquecerQuery(query);
+  const queryPexels = enriquecerQueryPexels(query);
   const cacheKey = queryOtimizada;
 
-  try {
-    // — Inicializa o buffer para esta query —
-    if (page === 1) {
-      delete imageBuffer[cacheKey];
-      delete tokenCache[cacheKey];
-      delete nextPageCache[cacheKey];
-    }
-
-    // Buffer já tem imagens suficientes para esta página?
-    const bufferAtual = imageBuffer[cacheKey] || [];
-    const startIdx    = (page - 1) * RESULTS_PER_PAGE;
-    const endIdx      = page * RESULTS_PER_PAGE;
-
-    if (bufferAtual.length >= endIdx) {
-      // Servir do buffer
-      return {
-        images: bufferAtual.slice(startIdx, endIdx),
-        totalResults: bufferAtual.length + RESULTS_PER_PAGE,
-        hasMore: bufferAtual.length > endIdx || !!nextPageCache[cacheKey],
-      };
-    }
-
-    // — Busca token VQD —
-    const vqd = await buscarToken(queryOtimizada);
-
-    // — Busca próximo lote de imagens —
-    const nextUrl = nextPageCache[cacheKey] || null;
-    const data    = await buscarLote(queryOtimizada, vqd, nextUrl);
-
-    const novosResultados = (data.results || [])
-      .filter(item => item.image && item.image.startsWith('http'))
-      .map((item, i) => normalizarImagem(item, i, page));
-
-    // Atualiza buffer e próxima página
-    imageBuffer[cacheKey]  = [...bufferAtual, ...novosResultados];
-    nextPageCache[cacheKey] = data.next || null;
-
-    const buffer    = imageBuffer[cacheKey];
-    const pageItems = buffer.slice(startIdx, endIdx);
-
-    return {
-      images: pageItems,
-      totalResults: buffer.length + (data.next ? RESULTS_PER_PAGE : 0),
-      hasMore: buffer.length > endIdx || !!data.next,
-    };
-
-  } catch (error) {
-    console.error('[DDG Search] Erro:', error.message);
-
-    // Mensagens de erro amigáveis
-    if (error.response?.status === 403 || error.response?.status === 429) {
-      throw new Error('Muitas buscas seguidas. Aguarde um momento e tente de novo.');
-    }
-    if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
-      throw new Error('Conexão lenta. Verifique sua internet e tente novamente.');
-    }
-    if (error.message.includes('token') || error.message.includes('VQD')) {
-      throw new Error('Erro ao iniciar busca. Tente de novo em alguns segundos.');
-    }
-
-    throw new Error('Não foi possível buscar imagens. Verifique sua conexão.');
+  if (page === 1 || !sessao[cacheKey]) {
+    sessao[cacheKey] = novaSessao();
   }
+  const s = sessao[cacheKey];
+
+  const startIdx = (page - 1) * IMAGES_PER_PAGE;
+  const endIdx = page * IMAGES_PER_PAGE;
+
+  let rodadas = 0;
+  while (s.buffer.length < endIdx && rodadas < MAX_RODADAS_POR_PAGINA) {
+    rodadas += 1;
+
+    if (!s.ddgFim || !s.bingFim) {
+      await rodadaDdgBing(s, queryOtimizada);
+    } else if (!s.pexelsFim) {
+      await rodadaPexels(s, queryPexels);
+    } else {
+      break; // Todas as fontes esgotadas — nada mais a buscar
+    }
+  }
+
+  // Se DDG+Bing já esgotaram e ainda falta preencher a página, tenta Pexels
+  if (s.buffer.length < endIdx && s.ddgFim && s.bingFim && !s.pexelsFim) {
+    await rodadaPexels(s, queryPexels);
+  }
+
+  const pageItems = s.buffer.slice(startIdx, endIdx);
+  const todasEsgotadas = s.ddgFim && s.bingFim && s.pexelsFim;
+  const hasMore = s.buffer.length > endIdx || !todasEsgotadas;
+
+  if (page === 1 && pageItems.length === 0) {
+    throw new Error(
+      'Não foi possível encontrar imagens agora. Tente outro termo ou aguarde um instante.'
+    );
+  }
+
+  return {
+    images: pageItems,
+    totalResults: s.buffer.length + (hasMore ? IMAGES_PER_PAGE : 0),
+    hasMore,
+  };
 }

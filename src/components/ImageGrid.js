@@ -14,7 +14,9 @@ import {
   StyleSheet,
   RefreshControl,
   Dimensions,
+  TouchableOpacity,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import ImageCard from './ImageCard';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -24,6 +26,7 @@ const COLORS = {
   cinzaTexto: '#757575',
   cinzaClaro: '#F5F5F5',
   texto: '#212121',
+  branco: '#FFFFFF',
 };
 
 /**
@@ -37,7 +40,9 @@ const COLORS = {
  * @param {Function} props.onRefresh — Callback do pull-to-refresh
  * @param {Function} props.onEndReached — Callback ao chegar no fim (paginação)
  * @param {string} props.emptyMessage — Mensagem quando não há resultados
- * @param {boolean} props.isDemo — Indica que são imagens de demonstração
+ * @param {boolean} props.erroPaginacao — Falha ao carregar mais páginas (degradação silenciosa)
+ * @param {boolean} props.mostrandoOcultas — Se true, há imagens já compartilhadas ocultas nesta busca
+ * @param {Function} props.onRevelarOcultas — Callback para mostrar as imagens já compartilhadas
  */
 export default function ImageGrid({
   images = [],
@@ -49,7 +54,9 @@ export default function ImageGrid({
   onRefresh,
   onEndReached,
   emptyMessage = 'Nenhuma imagem encontrada.',
-  isDemo = false,
+  erroPaginacao = false,
+  mostrandoOcultas = false,
+  onRevelarOcultas,
 }) {
 
   // Renderiza cada item do grid
@@ -63,7 +70,7 @@ export default function ImageGrid({
     );
   }
 
-  // Rodapé do FlatList: spinner ao carregar mais ou mensagem de fim
+  // Rodapé do FlatList: spinner ao carregar mais, aviso discreto de falha ou espaço final
   function renderFooter() {
     if (loadingMore) {
       return (
@@ -73,7 +80,16 @@ export default function ImageGrid({
         </View>
       );
     }
-    if (images.length > 0 && !loadingMore) {
+    if (erroPaginacao) {
+      return (
+        <View style={styles.footer}>
+          <Text style={styles.footerErroTexto}>
+            Não foi possível carregar mais imagens agora. Tente rolar novamente em instantes.
+          </Text>
+        </View>
+      );
+    }
+    if (images.length > 0) {
       return <View style={styles.footerEspaco} />;
     }
     return null;
@@ -111,26 +127,24 @@ export default function ImageGrid({
   if (!loading && images.length === 0) {
     return (
       <View style={styles.vazioContainer}>
-        <Text style={styles.vazioEmoji}>🔍</Text>
+        <Text style={styles.vazioEmoji}>{mostrandoOcultas ? '✅' : '🔍'}</Text>
         <Text style={styles.vazioTexto}>{emptyMessage}</Text>
-        <Text style={styles.vazioSubtexto}>
-          Tente buscar por "bom dia", "motivação" ou "boa tarde"
-        </Text>
+        {mostrandoOcultas ? (
+          <TouchableOpacity style={styles.vazioBotao} onPress={onRevelarOcultas} activeOpacity={0.8}>
+            <Ionicons name="eye" size={16} color={COLORS.branco} />
+            <Text style={styles.vazioBotaoTexto}>Mostrar já enviadas</Text>
+          </TouchableOpacity>
+        ) : (
+          <Text style={styles.vazioSubtexto}>
+            Tente buscar por "bom dia", "motivação" ou "boa tarde"
+          </Text>
+        )}
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      {/* Banner de demonstração */}
-      {isDemo && (
-        <View style={styles.demoBanner}>
-          <Text style={styles.demoBannerTexto}>
-            🔑 Configure sua chave em src/config/api.js para ver imagens reais
-          </Text>
-        </View>
-      )}
-
       <FlatList
         data={images}
         renderItem={renderItem}
@@ -194,11 +208,26 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 20,
   },
+  vazioBotao: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.verde,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    gap: 6,
+  },
+  vazioBotaoTexto: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.branco,
+  },
   footer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 16,
+    paddingHorizontal: 32,
     gap: 8,
   },
   footerTexto: {
@@ -206,23 +235,13 @@ const styles = StyleSheet.create({
     color: COLORS.cinzaTexto,
     marginLeft: 8,
   },
+  footerErroTexto: {
+    fontSize: 12,
+    color: COLORS.cinzaTexto,
+    textAlign: 'center',
+    lineHeight: 17,
+  },
   footerEspaco: {
     height: 20,
-  },
-  demoBanner: {
-    backgroundColor: '#FFF3CD',
-    borderColor: '#FFC107',
-    borderWidth: 1,
-    marginHorizontal: 12,
-    marginTop: 8,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  demoBannerTexto: {
-    fontSize: 12,
-    color: '#856404',
-    textAlign: 'center',
-    lineHeight: 16,
   },
 });

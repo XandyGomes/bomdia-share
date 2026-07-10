@@ -13,6 +13,7 @@ import {
   StyleSheet,
   Animated,
   Dimensions,
+  Easing,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -45,12 +46,14 @@ function SkeletonCard() {
       Animated.sequence([
         Animated.timing(pulseAnim, {
           toValue: 1,
-          duration: 800,
+          duration: 900,
+          easing: Easing.inOut(Easing.ease),
           useNativeDriver: true,
         }),
         Animated.timing(pulseAnim, {
           toValue: 0,
-          duration: 800,
+          duration: 900,
+          easing: Easing.inOut(Easing.ease),
           useNativeDriver: true,
         }),
       ])

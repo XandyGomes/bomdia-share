@@ -21,7 +21,9 @@ import {
   ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { compartilharImagem, compartilharNoWhatsApp, salvarNaGaleria } from '../services/shareImage';
+import { marcarComoCompartilhada } from '../services/sharedHistory';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -43,8 +45,9 @@ const COLORS = {
  * @param {boolean} props.visible — Controla visibilidade do modal
  * @param {Object|null} props.image — Objeto da imagem selecionada
  * @param {Function} props.onClose — Callback ao fechar o modal
+ * @param {Function} props.onCompartilhado — Callback quando a imagem é marcada como compartilhada
  */
-export default function ImageModal({ visible, image, onClose }) {
+export default function ImageModal({ visible, image, onClose, onCompartilhado }) {
   const [baixando, setBaixando] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [progresso, setProgresso] = useState(0);
@@ -78,6 +81,7 @@ export default function ImageModal({ visible, image, onClose }) {
     if (baixando || salvando) return;
 
     try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       setBaixando(true);
       setAcaoAtual('Baixando imagem...');
       setProgresso(0);
@@ -88,6 +92,9 @@ export default function ImageModal({ visible, image, onClose }) {
       });
 
       setAcaoAtual('');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      await marcarComoCompartilhada(image.url);
+      onCompartilhado?.(image.url);
     } catch (error) {
       Alert.alert('Erro', error.message, [{ text: 'OK' }]);
     } finally {
@@ -104,6 +111,7 @@ export default function ImageModal({ visible, image, onClose }) {
     if (baixando || salvando) return;
 
     try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       setBaixando(true);
       setAcaoAtual('Baixando para o WhatsApp...');
       setProgresso(0);
@@ -113,6 +121,9 @@ export default function ImageModal({ visible, image, onClose }) {
         if (p > 0.5) setAcaoAtual('Abrindo WhatsApp...');
       });
 
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      await marcarComoCompartilhada(image.url);
+      onCompartilhado?.(image.url);
     } catch (error) {
       Alert.alert('Erro', error.message, [{ text: 'OK' }]);
     } finally {
@@ -129,6 +140,7 @@ export default function ImageModal({ visible, image, onClose }) {
     if (baixando || salvando) return;
 
     try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       setSalvando(true);
       setAcaoAtual('Salvando na galeria...');
       setProgresso(0);
@@ -138,6 +150,7 @@ export default function ImageModal({ visible, image, onClose }) {
       });
 
       if (salvo) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         Alert.alert(
           '✅ Salvo!',
           'Imagem salva no álbum "BomDia Share" da sua galeria.',
