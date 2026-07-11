@@ -19,12 +19,25 @@ function gerarNomeArquivo(imageUrl) {
 }
 
 /**
- * Baixa uma imagem para o cache local
+ * Verifica se a URI já é um arquivo local (ex: gerado por react-native-view-shot
+ * ao capturar a imagem com frase sobreposta), sem precisar de download
+ */
+function isLocalUri(uri) {
+  return uri.startsWith('file://') || uri.startsWith('content://');
+}
+
+/**
+ * Baixa uma imagem para o cache local (ou retorna direto se já for local)
  * @param {string} imageUrl
  * @param {Function} onProgress  (0..1)
  * @returns {Promise<string>} URI local
  */
 export async function downloadImagem(imageUrl, onProgress = null) {
+  if (isLocalUri(imageUrl)) {
+    if (onProgress) onProgress(1);
+    return imageUrl;
+  }
+
   const nomeArquivo = gerarNomeArquivo(imageUrl);
   const caminhoLocal = FileSystem.cacheDirectory + nomeArquivo;
 

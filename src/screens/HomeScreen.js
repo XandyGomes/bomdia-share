@@ -411,6 +411,7 @@ export default function HomeScreen() {
       <ImageModal
         visible={modalVisivel}
         image={imagemSelecionada}
+        categoriaAtivaId={categoriaAtivaId}
         onClose={() => setModalVisivel(false)}
         onCompartilhado={registrarCompartilhamento}
       />

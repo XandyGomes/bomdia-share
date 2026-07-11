@@ -21,9 +21,12 @@ import {
   ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
+import { captureRef } from 'react-native-view-shot';
 import { compartilharImagem, compartilharNoWhatsApp, salvarNaGaleria } from '../services/shareImage';
 import { marcarComoCompartilhada } from '../services/sharedHistory';
+import { getFrasesPorCategoria } from '../constants/frases';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -44,15 +47,23 @@ const COLORS = {
  * @param {Object} props
  * @param {boolean} props.visible — Controla visibilidade do modal
  * @param {Object|null} props.image — Objeto da imagem selecionada
+ * @param {string|null} props.categoriaAtivaId — Categoria ativa, pra escolher o banco de frases certo
  * @param {Function} props.onClose — Callback ao fechar o modal
  * @param {Function} props.onCompartilhado — Callback quando a imagem é marcada como compartilhada
  */
-export default function ImageModal({ visible, image, onClose, onCompartilhado }) {
+export default function ImageModal({ visible, image, categoriaAtivaId, onClose, onCompartilhado }) {
   const [baixando, setBaixando] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [progresso, setProgresso] = useState(0);
   const [acaoAtual, setAcaoAtual] = useState('');
   const [imagemCarregada, setImagemCarregada] = useState(false);
+
+  // ── Frase sobre a foto ──────────────────────────────────────────────────────
+  const [fraseAtiva, setFraseAtiva] = useState(false);
+  const [fraseIndex, setFraseIndex] = useState(0);
+  const capturaRef = useRef(null);
+  const frases = getFrasesPorCategoria(categoriaAtivaId);
+  const fraseTexto = frases[fraseIndex % frases.length];
 
   // Animação de entrada do modal
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -60,6 +71,10 @@ export default function ImageModal({ visible, image, onClose, onCompartilhado })
   React.useEffect(() => {
     if (visible) {
       setImagemCarregada(false);
+      // Fotos do Pexels não têm texto embutido — liga a frase por padrão.
+      // DDG/Bing já vêm com frase própria, então começa desligado.
+      setFraseAtiva(image?.source === 'pexels');
+      setFraseIndex(0);
       Animated.timing(fadeAnim, {
         toValue: 1,
         duration: 200,
@@ -70,9 +85,32 @@ export default function ImageModal({ visible, image, onClose, onCompartilhado })
       setProgresso(0);
       setAcaoAtual('');
     }
-  }, [visible]);
+  }, [visible, image?.id]);
 
   if (!image) return null;
+
+  function handleToggleFrase() {
+    Haptics.selectionAsync();
+    setFraseAtiva(prev => !prev);
+  }
+
+  function handleEmbaralharFrase() {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setFraseIndex(prev => prev + 1);
+  }
+
+  /**
+   * Se a frase estiver ativa, captura a view (foto + frase) como uma imagem
+   * só; senão usa a URL original da foto
+   */
+  async function resolverUriParaCompartilhar() {
+    if (!fraseAtiva) return image.url;
+    return await captureRef(capturaRef, {
+      format: 'jpg',
+      quality: 0.92,
+      result: 'tmpfile',
+    });
+  }
 
   /**
    * Compartilha a imagem via share sheet nativo
@@ -83,10 +121,11 @@ export default function ImageModal({ visible, image, onClose, onCompartilhado })
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       setBaixando(true);
-      setAcaoAtual('Baixando imagem...');
+      setAcaoAtual(fraseAtiva ? 'Preparando imagem...' : 'Baixando imagem...');
       setProgresso(0);
 
-      await compartilharImagem(image.url, (p) => {
+      const uriParaEnvio = await resolverUriParaCompartilhar();
+      await compartilharImagem(uriParaEnvio, (p) => {
         setProgresso(p);
         if (p > 0.5) setAcaoAtual('Preparando para compartilhar...');
       });
@@ -113,10 +152,11 @@ export default function ImageModal({ visible, image, onClose, onCompartilhado })
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       setBaixando(true);
-      setAcaoAtual('Baixando para o WhatsApp...');
+      setAcaoAtual(fraseAtiva ? 'Preparando imagem...' : 'Baixando para o WhatsApp...');
       setProgresso(0);
 
-      await compartilharNoWhatsApp(image.url, (p) => {
+      const uriParaEnvio = await resolverUriParaCompartilhar();
+      await compartilharNoWhatsApp(uriParaEnvio, (p) => {
         setProgresso(p);
         if (p > 0.5) setAcaoAtual('Abrindo WhatsApp...');
       });
@@ -142,10 +182,11 @@ export default function ImageModal({ visible, image, onClose, onCompartilhado })
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       setSalvando(true);
-      setAcaoAtual('Salvando na galeria...');
+      setAcaoAtual(fraseAtiva ? 'Preparando imagem...' : 'Salvando na galeria...');
       setProgresso(0);
 
-      const salvo = await salvarNaGaleria(image.url, (p) => {
+      const uriParaSalvar = await resolverUriParaCompartilhar();
+      const salvo = await salvarNaGaleria(uriParaSalvar, (p) => {
         setProgresso(p);
       });
 
@@ -206,12 +247,59 @@ export default function ImageModal({ visible, image, onClose, onCompartilhado })
             />
           )}
 
-          <Image
-            source={{ uri: image.url }}
-            style={styles.imagem}
-            resizeMode="contain"
-            onLoad={() => setImagemCarregada(true)}
-          />
+          {/* View capturável: foto + frase sobreposta viram uma imagem só */}
+          <View ref={capturaRef} collapsable={false} style={styles.imagemCapturavel}>
+            <Image
+              source={{ uri: image.url }}
+              style={styles.imagem}
+              resizeMode="contain"
+              onLoad={() => setImagemCarregada(true)}
+            />
+
+            {fraseAtiva && imagemCarregada && (
+              <View style={styles.fraseOverlay} pointerEvents="none">
+                <LinearGradient
+                  colors={['transparent', 'rgba(0,0,0,0.8)']}
+                  style={StyleSheet.absoluteFill}
+                />
+                <Text
+                  style={styles.fraseTexto}
+                  numberOfLines={3}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                >
+                  {fraseTexto}
+                </Text>
+              </View>
+            )}
+          </View>
+        </View>
+
+        {/* Controles da frase */}
+        <View style={styles.fraseControles}>
+          <TouchableOpacity
+            style={[styles.fraseChip, fraseAtiva && styles.fraseChipAtivo]}
+            onPress={handleToggleFrase}
+            disabled={emCarregamento}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="text" size={15} color={COLORS.branco} />
+            <Text style={styles.fraseChipTexto}>
+              {fraseAtiva ? 'Frase ligada' : 'Adicionar frase'}
+            </Text>
+          </TouchableOpacity>
+
+          {fraseAtiva && (
+            <TouchableOpacity
+              style={styles.fraseBotaoTrocar}
+              onPress={handleEmbaralharFrase}
+              disabled={emCarregamento}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="shuffle" size={18} color={COLORS.branco} />
+              <Text style={styles.fraseChipTexto}>Trocar frase</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Barra de progresso */}
@@ -317,10 +405,72 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginVertical: 10,
   },
-  imagem: {
+  imagemCapturavel: {
     width: SCREEN_WIDTH - 20,
     height: SCREEN_HEIGHT * 0.55,
     borderRadius: 12,
+    overflow: 'hidden',
+  },
+  imagem: {
+    width: '100%',
+    height: '100%',
+  },
+  fraseOverlay: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: 20,
+    paddingTop: 40,
+    paddingBottom: 22,
+  },
+  fraseTexto: {
+    color: COLORS.branco,
+    fontSize: 22,
+    fontWeight: '800',
+    textAlign: 'center',
+    lineHeight: 28,
+    textShadowColor: 'rgba(0,0,0,0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+  },
+  fraseControles: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    marginBottom: 4,
+  },
+  fraseChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.25)',
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    gap: 6,
+  },
+  fraseChipAtivo: {
+    backgroundColor: COLORS.verde,
+    borderColor: COLORS.verdeDark,
+  },
+  fraseChipTexto: {
+    color: COLORS.branco,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  fraseBotaoTrocar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.25)',
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    gap: 6,
   },
   progressoContainer: {
     height: 3,
