@@ -26,7 +26,9 @@ import * as Haptics from 'expo-haptics';
 import { captureRef } from 'react-native-view-shot';
 import { compartilharImagem, compartilharNoWhatsApp, salvarNaGaleria } from '../services/shareImage';
 import { marcarComoCompartilhada } from '../services/sharedHistory';
+import { gerarFraseIA } from '../services/geminiPhrase';
 import { getFrasesPorCategoria } from '../constants/frases';
+import { CATEGORIAS } from '../constants/categorias';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -60,10 +62,17 @@ export default function ImageModal({ visible, image, categoriaAtivaId, onClose, 
 
   // ── Frase sobre a foto ──────────────────────────────────────────────────────
   const [fraseAtiva, setFraseAtiva] = useState(false);
-  const [fraseIndex, setFraseIndex] = useState(0);
+  const [fraseTexto, setFraseTexto] = useState('');
+  const [gerandoFrase, setGerandoFrase] = useState(false);
   const capturaRef = useRef(null);
-  const frases = getFrasesPorCategoria(categoriaAtivaId);
-  const fraseTexto = frases[fraseIndex % frases.length];
+
+  const categoriaLabel =
+    CATEGORIAS.find(c => c.id === categoriaAtivaId)?.label || 'bom dia';
+
+  function fraseAleatoriaDoBanco() {
+    const frases = getFrasesPorCategoria(categoriaAtivaId);
+    return frases[Math.floor(Math.random() * frases.length)];
+  }
 
   // Animação de entrada do modal
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -74,7 +83,8 @@ export default function ImageModal({ visible, image, categoriaAtivaId, onClose, 
       // Fotos do Pexels não têm texto embutido — liga a frase por padrão.
       // DDG/Bing já vêm com frase própria, então começa desligado.
       setFraseAtiva(image?.source === 'pexels');
-      setFraseIndex(0);
+      setFraseTexto(fraseAleatoriaDoBanco());
+      setGerandoFrase(false);
       Animated.timing(fadeAnim, {
         toValue: 1,
         duration: 200,
@@ -94,9 +104,22 @@ export default function ImageModal({ visible, image, categoriaAtivaId, onClose, 
     setFraseAtiva(prev => !prev);
   }
 
-  function handleEmbaralharFrase() {
+  /**
+   * Pede uma frase nova pra IA (Gemini); se não tiver chave configurada ou a
+   * chamada falhar, cai pro banco de frases fixo em vez de travar o usuário
+   */
+  async function handleEmbaralharFrase() {
+    if (gerandoFrase) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setFraseIndex(prev => prev + 1);
+    setGerandoFrase(true);
+    try {
+      const nova = await gerarFraseIA(categoriaLabel);
+      setFraseTexto(nova);
+    } catch (_) {
+      setFraseTexto(fraseAleatoriaDoBanco());
+    } finally {
+      setGerandoFrase(false);
+    }
   }
 
   /**
@@ -293,11 +316,17 @@ export default function ImageModal({ visible, image, categoriaAtivaId, onClose, 
             <TouchableOpacity
               style={styles.fraseBotaoTrocar}
               onPress={handleEmbaralharFrase}
-              disabled={emCarregamento}
+              disabled={emCarregamento || gerandoFrase}
               activeOpacity={0.8}
             >
-              <Ionicons name="shuffle" size={18} color={COLORS.branco} />
-              <Text style={styles.fraseChipTexto}>Trocar frase</Text>
+              {gerandoFrase ? (
+                <ActivityIndicator size="small" color={COLORS.branco} />
+              ) : (
+                <Ionicons name="sparkles" size={16} color={COLORS.branco} />
+              )}
+              <Text style={styles.fraseChipTexto}>
+                {gerandoFrase ? 'Gerando...' : 'Nova frase (IA)'}
+              </Text>
             </TouchableOpacity>
           )}
         </View>

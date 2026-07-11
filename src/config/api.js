@@ -16,3 +16,9 @@ export const SEARCH_TIMEOUT = 15000;
 // coloque em um arquivo .env local (nunca commitado, veja .env.example):
 //   EXPO_PUBLIC_PEXELS_API_KEY=sua_chave_aqui
 export const PEXELS_API_KEY = process.env.EXPO_PUBLIC_PEXELS_API_KEY || '';
+
+// Chave gratuita do Google Gemini (opcional) — gera frases de bom dia/motivação
+// sob demanda. Sem chave, o app usa só o banco de frases fixo (src/constants/frases.js).
+// Crie a sua em https://aistudio.google.com/apikey e coloque no .env local:
+//   EXPO_PUBLIC_GEMINI_API_KEY=sua_chave_aqui
+export const GEMINI_API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY || '';
