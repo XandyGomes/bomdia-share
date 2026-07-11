@@ -167,9 +167,20 @@ export async function buscarImagens(query, page = 1) {
   let rodadas = 0;
   while (s.buffer.length < endIdx && rodadas < MAX_RODADAS_POR_PAGINA) {
     rodadas += 1;
+    const antesDaRodada = s.buffer.length;
 
     if (!s.ddgFim || !s.bingFim) {
       await rodadaDdgBing(s, queryOtimizada);
+
+      // DDG/Bing podem dizer "tenho mais" e continuar respondendo com sucesso,
+      // mas se tudo que voltou já era duplicado (ex: o buscador começou a
+      // repetir resultados), essa rodada não adiciona nada de novo. Nesse
+      // caso tratamos como esgotado pra essa busca e passamos pro Pexels,
+      // em vez de ficar gastando rodadas tentando as mesmas fontes.
+      if (s.buffer.length === antesDaRodada) {
+        s.ddgFim = true;
+        s.bingFim = true;
+      }
     } else if (!s.pexelsFim) {
       await rodadaPexels(s, queryPexels);
     } else {
@@ -177,7 +188,8 @@ export async function buscarImagens(query, page = 1) {
     }
   }
 
-  // Se DDG+Bing já esgotaram e ainda falta preencher a página, tenta Pexels
+  // Se DDG+Bing já esgotaram (ou pararam de progredir) e ainda falta
+  // preencher a página, tenta Pexels
   if (s.buffer.length < endIdx && s.ddgFim && s.bingFim && !s.pexelsFim) {
     await rodadaPexels(s, queryPexels);
   }
