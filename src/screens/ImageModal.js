@@ -65,6 +65,8 @@ export default function ImageModal({ visible, image, categoriaAtivaId, onClose, 
   const [fraseTexto, setFraseTexto] = useState('');
   const [gerandoFrase, setGerandoFrase] = useState(false);
   const capturaRef = useRef(null);
+  // Frases já geradas nesta sessão do modal, pra pedir pra IA não repetir o padrão
+  const frasesUsadasRef = useRef([]);
 
   const categoriaLabel =
     CATEGORIAS.find(c => c.id === categoriaAtivaId)?.label || 'bom dia';
@@ -85,6 +87,7 @@ export default function ImageModal({ visible, image, categoriaAtivaId, onClose, 
       setFraseAtiva(image?.source === 'pexels');
       setFraseTexto(fraseAleatoriaDoBanco());
       setGerandoFrase(false);
+      frasesUsadasRef.current = [];
       Animated.timing(fadeAnim, {
         toValue: 1,
         duration: 200,
@@ -113,7 +116,8 @@ export default function ImageModal({ visible, image, categoriaAtivaId, onClose, 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setGerandoFrase(true);
     try {
-      const nova = await gerarFraseIA(categoriaLabel);
+      const nova = await gerarFraseIA(categoriaLabel, frasesUsadasRef.current);
+      frasesUsadasRef.current = [...frasesUsadasRef.current, nova];
       setFraseTexto(nova);
     } catch (_) {
       setFraseTexto(fraseAleatoriaDoBanco());
