@@ -56,7 +56,8 @@ async function buscarToken(query) {
  * Busca lote de imagens na API do DuckDuckGo
  */
 async function buscarLote(query, vqd, nextUrl = null) {
-  const url = nextUrl ? `https://duckduckgo.com${nextUrl}` : DDG_IMG;
+  // O campo "next" da resposta do DDG vem sem barra inicial (ex: "i.js?...")
+  const url = nextUrl ? `https://duckduckgo.com/${nextUrl}` : DDG_IMG;
   const params = nextUrl
     ? {}
     : {
